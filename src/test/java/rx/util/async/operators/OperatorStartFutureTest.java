@@ -34,7 +34,6 @@ import org.mockito.InOrder;
 
 import rx.Observable;
 import rx.Observer;
-import rx.exceptions.TestException;
 import rx.functions.Func0;
 import rx.schedulers.Schedulers;
 import rx.util.async.Async;

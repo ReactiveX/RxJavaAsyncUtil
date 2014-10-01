@@ -44,7 +44,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 
 import rx.Observable;
-import rx.exceptions.TestException;
 import rx.functions.Action1;
 import rx.schedulers.Schedulers;
 import rx.util.async.Async;
