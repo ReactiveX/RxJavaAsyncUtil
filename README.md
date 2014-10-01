@@ -1,6 +1,6 @@
 # RxJava Async Utils
 
-Async utilities for [RxJava](https://github.com/ReactiveX/RxJava);
+Async utilities for [RxJava](https://github.com/ReactiveX/RxJava).
 
 ## Master Build Status
 
