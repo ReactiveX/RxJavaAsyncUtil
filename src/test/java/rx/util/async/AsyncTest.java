@@ -16,11 +16,19 @@
 
 package rx.util.async;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
+import static org.mockito.Matchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
-
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
-
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -30,6 +38,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
@@ -62,6 +71,16 @@ import rx.functions.FuncN;
 import rx.observers.TestObserver;
 import rx.schedulers.Schedulers;
 import rx.schedulers.TestScheduler;
+import rx.util.async.functions.ThrowingFunc1;
+import rx.util.async.functions.ThrowingFunc2;
+import rx.util.async.functions.ThrowingFunc3;
+import rx.util.async.functions.ThrowingFunc4;
+import rx.util.async.functions.ThrowingFunc5;
+import rx.util.async.functions.ThrowingFunc6;
+import rx.util.async.functions.ThrowingFunc7;
+import rx.util.async.functions.ThrowingFunc8;
+import rx.util.async.functions.ThrowingFunc9;
+import rx.util.async.functions.ThrowingFuncN;
 
 public class AsyncTest {
     @Mock
@@ -730,7 +749,7 @@ public class AsyncTest {
             }
         };
 
-        Observable<String> observable = Async.start(func, scheduler);
+        Observable<String> observable = Async.startCallable(func, scheduler);
 
         @SuppressWarnings("unchecked")
         Observer<String> observer = mock(Observer.class);
@@ -758,7 +777,7 @@ public class AsyncTest {
             }
         };
 
-        Observable<String> observable = Async.start(func, scheduler);
+        Observable<String> observable = Async.startCallable(func, scheduler);
 
         // Run func
         scheduler.advanceTimeBy(100, TimeUnit.MILLISECONDS);
@@ -786,7 +805,7 @@ public class AsyncTest {
             }
         }).when(func).call();
 
-        Observable<String> observable = Async.start(func, scheduler);
+        Observable<String> observable = Async.startCallable(func, scheduler);
 
         scheduler.advanceTimeBy(100, TimeUnit.MILLISECONDS);
 
@@ -818,6 +837,500 @@ public class AsyncTest {
         inOrder.verifyNoMoreInteractions();
 
         verify(func, times(1)).call();
+    }
+    
+    @Test
+    public void testStartCallable() throws Exception {
+        TestScheduler scheduler = new TestScheduler();
+        Callable<String> func = Mockito.mock(Callable.class);
+        Mockito.when(func.call()).thenReturn("One");
+        
+        Observable<String> observable = Async.startCallable(func, scheduler);
+        
+        scheduler.advanceTimeBy(100, TimeUnit.MILLISECONDS);
+        
+        Observer<String> observer1 = Mockito.mock(Observer.class);
+        Observer<String> observer2 = Mockito.mock(Observer.class);
+        observable.subscribe(observer1);
+        observable.subscribe(observer2);
+        
+        InOrder inOrder = Mockito.inOrder(func, observer1, observer2);
+        
+        inOrder.verify(func, times(1)).call(); // verify the function is only called once, not each time someone subscribes.
+        inOrder.verify(observer1, times(1)).onNext("One");
+        inOrder.verify(observer1, times(1)).onCompleted();
+        inOrder.verify(observer2, times(1)).onNext("One");
+        inOrder.verify(observer2, times(1)).onCompleted();
+        inOrder.verifyNoMoreInteractions();
+    }
+    
+    @Test
+    public void testStartCallableThrows() throws Exception {
+        TestScheduler scheduler = new TestScheduler();
+        Exception exception = new Exception();
+        Callable<String> func = Mockito.mock(Callable.class);
+        Mockito.when(func.call()).thenThrow(exception);
+        
+        Observable<String> observable = Async.startCallable(func, scheduler);
+        
+        scheduler.advanceTimeBy(100, TimeUnit.MILLISECONDS);
+        
+        Observer<String> observer1 = Mockito.mock(Observer.class);
+        Observer<String> observer2 = Mockito.mock(Observer.class);
+        observable.subscribe(observer1);
+        observable.subscribe(observer2);
+        
+        InOrder inOrder = Mockito.inOrder(func, observer1, observer2);
+        
+        inOrder.verify(func, times(1)).call(); // verify the function is only called once, not each time someone subscribes.
+        inOrder.verify(observer1, times(1)).onError(exception);
+        inOrder.verify(observer2, times(1)).onError(exception);
+        inOrder.verifyNoMoreInteractions();
+    }
+    
+    @Test
+    public void testCallable() throws Exception {
+        Callable<Integer> func = spy(new Callable<Integer>() {
+            @Override
+            public Integer call() {
+                return 0;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call();
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call();
+        
+        observable.subscribe(observer);
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(0);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testCallableThrows() throws Exception {
+        final Exception exception = new Exception();
+        Callable<Integer> func = new Callable<Integer>() {
+            @Override
+            public Integer call() throws Exception {
+                throw exception;
+            }
+        };
+       
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call()
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(0);
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc1() throws Exception {
+        ThrowingFunc1<Integer, Integer> func = spy(new ThrowingFunc1<Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1) throws Exception {
+                return t1;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1);
+
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(1);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc1Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc1<Integer, Integer> func = new ThrowingFunc1<Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc2() throws Exception {
+	ThrowingFunc2<Integer, Integer, Integer> func = spy(new ThrowingFunc2<Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2) throws Exception {
+                return t1 | t2;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2);
+                
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(3);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc2Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc2<Integer, Integer, Integer> func = new ThrowingFunc2<Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc3() throws Exception {
+	ThrowingFunc3<Integer, Integer, Integer, Integer> func = spy(new ThrowingFunc3<Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3) throws Exception {
+                return t1 | t2 | t3;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2, 4);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2, 4);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(7);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc3Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc3<Integer, Integer, Integer, Integer> func = new ThrowingFunc3<Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2, 4)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc4() throws Exception {
+	ThrowingFunc4<Integer, Integer, Integer, Integer, Integer> func = spy(new ThrowingFunc4<Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4) throws Exception {
+                return t1 | t2 | t3 | t4;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2, 4, 8);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2, 4, 8);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(15);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc4Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc4<Integer, Integer, Integer, Integer, Integer> func = new ThrowingFunc4<Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2, 4, 8)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc5() throws Exception {
+	ThrowingFunc5<Integer, Integer, Integer, Integer, Integer, Integer> func = spy(new ThrowingFunc5<Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5) throws Exception {
+                return t1 | t2 | t3 | t4 | t5;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2, 4, 8, 16);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2, 4, 8, 16);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(31);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc5Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc5<Integer, Integer, Integer, Integer, Integer, Integer> func = new ThrowingFunc5<Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2, 4, 8, 16)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc6() throws Exception {
+	ThrowingFunc6<Integer, Integer, Integer, Integer, Integer, Integer, Integer> func = spy(new ThrowingFunc6<Integer, Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5, Integer t6) throws Exception {
+                return t1 | t2 | t3 | t4 | t5 | t6;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2, 4, 8, 16, 32);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2, 4, 8, 16, 32);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(63);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc6Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc6<Integer, Integer, Integer, Integer, Integer, Integer, Integer> func = new ThrowingFunc6<Integer, Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5, Integer t6) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2, 4, 8, 16, 32)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc7() throws Exception {
+	ThrowingFunc7<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer> func = spy(new ThrowingFunc7<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5, Integer t6, Integer t7) throws Exception {
+                return t1 | t2 | t3 | t4 | t5 | t6 | t7;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2, 4, 8, 16, 32, 64);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2, 4, 8, 16, 32, 64);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(127);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc7Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc7<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer> func = new ThrowingFunc7<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5, Integer t6, Integer t7) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2, 4, 8, 16, 32, 64)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc8() throws Exception {
+	ThrowingFunc8<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer> func = spy(new ThrowingFunc8<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5, Integer t6, Integer t7, Integer t8) throws Exception {
+                return t1 | t2 | t3 | t4 | t5 | t6 | t7 | t8;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2, 4, 8, 16, 32, 64, 128);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2, 4, 8, 16, 32, 64, 128);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(255);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc8Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc8<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer> func = new ThrowingFunc8<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5, Integer t6, Integer t7, Integer t8) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2, 4, 8, 16, 32, 64, 128)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFunc9() throws Exception {
+	ThrowingFunc9<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer> func = spy(new ThrowingFunc9<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5, Integer t6, Integer t7, Integer t8, Integer t9) throws Exception {
+                return t1 | t2 | t3 | t4 | t5 | t6 | t7 | t8 | t9;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2, 4, 8, 16, 32, 64, 128, 256);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2, 4, 8, 16, 32, 64, 128, 256);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(511);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFunc9Throws() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFunc9<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer> func = new ThrowingFunc9<Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer>() {
+            @Override
+            public Integer call(Integer t1, Integer t2, Integer t3, Integer t4, Integer t5, Integer t6, Integer t7, Integer t8, Integer t9) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2, 4, 8, 16, 32, 64, 128, 256)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
+    }
+
+    @Test
+    public void testThrowingFuncN() throws Exception {
+	ThrowingFuncN<Integer> func = spy(new ThrowingFuncN<Integer>() {
+            @Override
+            public Integer call(Object... args) throws Exception {
+                int i = 0;
+                for (Object o : args) {
+                    i = i | (Integer) o;
+                }
+                return i;
+            }
+        });
+        Observable<Integer> observable = 
+        	Async.toAsyncThrowing(func, Schedulers.immediate())
+                     .call(1, 2, 4, 8, 16, 32, 64, 128, 256, 512);
+        
+        // Verifies that the returned Observable is "hot"
+        verify(func, times(1)).call(1, 2, 4, 8, 16, 32, 64, 128, 256, 512);
+        
+        observable.subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, never()).onError(any(Throwable.class));
+        verify(observer, times(1)).onNext(1023);
+        verify(observer, times(1)).onCompleted();
+    }
+    
+    @Test
+    public void testThrowingFuncNThrows() throws Exception {
+        final Exception exception = new Exception();
+        ThrowingFuncN<Integer> func = new ThrowingFuncN<Integer>() {
+            @Override
+            public Integer call(Object... args) throws Exception {
+                throw exception;
+            }
+        };
+        Async.toAsyncThrowing(func, Schedulers.immediate())
+             .call(1, 2, 4, 8, 16, 32, 64, 128, 256, 512)
+             .subscribe(new TestObserver<Object>(observer));
+
+        verify(observer, times(1)).onError(exception);
+        verify(observer, never()).onNext(Mockito.any());
+        verify(observer, never()).onCompleted();
     }
 
     @Test
