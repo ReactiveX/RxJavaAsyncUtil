@@ -23,11 +23,13 @@ import rx.subjects.AsyncSubject;
 import rx.subjects.PublishSubject;
 import rx.subjects.Subject;
 import rx.subscriptions.SerialSubscription;
+import rx.util.async.functions.*;
 import rx.util.async.operators.*;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
+
 
 /**
  * Utility methods to convert functions and actions into asynchronous operations through the Observable/Observer
@@ -54,7 +56,25 @@ public final class Async {
      * @see <a href="http://msdn.microsoft.com/en-us/library/hh229036.aspx">MSDN: Observable.Start</a>
      */
     public static <T> Observable<T> start(Func0<T> func) {
-        return Async.toAsync(func).call();
+        return startCallable(func);
+    }
+    
+    /**
+     * Invokes the specified function asynchronously and returns an Observable that emits the result.
+     * <p>
+     * Note: The function is called immediately and once, not whenever an observer subscribes to the resulting
+     * Observable. Multiple subscriptions to this Observable observe the same return value.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/start.png" alt="">
+     *
+     * @param <R> the result value type
+     * @param func function to run asynchronously
+     * @return an Observable that emits the function's result value, or notifies observers of an exception
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-start">RxJava Wiki: start()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229036.aspx">MSDN: Observable.Start</a>
+     */
+    public static <R> Observable<R> startCallable(Callable<? extends R> func) {
+        return startCallable(func, Schedulers.computation());
     }
     
     /**
@@ -74,7 +94,43 @@ public final class Async {
      * @see <a href="http://msdn.microsoft.com/en-us/library/hh211721.aspx">MSDN: Observable.Start</a>
      */
     public static <T> Observable<T> start(Func0<T> func, Scheduler scheduler) {
-        return Async.toAsync(func, scheduler).call();
+        return startCallable(func, scheduler);
+    }
+    
+    /**
+     * Invokes the specified callable asynchronously and returns an Observable that emits the result.
+     * <p>
+     * Note: The function is called immediately and once, not whenever an observer subscribes to the resulting
+     * Observable. Multiple subscriptions to this Observable observe the same return value.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/start.png" alt="">
+     *
+     * @param <R> the result value type
+     * @param func function to run asynchronously
+     * @return an Observable that emits the function's result value, or notifies observers of an exception
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-start">RxJava Wiki: start()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229036.aspx">MSDN: Observable.Start</a>
+     */
+    public static <R> Observable<R> startCallable(final Callable<? extends R> func, final Scheduler scheduler) {
+        final AsyncSubject<R> subject = AsyncSubject.create();
+        final Worker inner = scheduler.createWorker();
+        inner.schedule(new Action0() {
+            @Override
+            public void call() {
+                R result;
+                try {
+                    result = func.call();
+                } catch (Throwable t) {
+                    subject.onError(t);
+                    return;
+                } finally {
+                    inner.unsubscribe();
+                }
+                subject.onNext(result);
+                subject.onCompleted();
+            }
+        });
+        return subject;
     }
     
     /**
@@ -104,6 +160,21 @@ public final class Async {
      */
     public static <R> Func0<Observable<R>> toAsync(Func0<? extends R> func) {
         return toAsync(func, Schedulers.computation());
+    }
+    
+    /**
+     * Convert a synchronous callable call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <R> the result value type
+     * @param func the callable to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229182.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <R> Func0<Observable<R>> toAsyncThrowing(Callable<? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
     }
     
     /**
@@ -138,6 +209,22 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> first parameter type of the action
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229755.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, R> Func1<T1, Observable<R>> toAsyncThrowing(ThrowingFunc1<? super T1, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.an.png" alt="">
@@ -168,6 +255,23 @@ public final class Async {
      */
     public static <T1, T2, R> Func2<T1, T2, Observable<R>> toAsync(Func2<? super T1, ? super T2, ? extends R> func) {
         return toAsync(func, Schedulers.computation());
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229851.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, R> Func2<T1, T2, Observable<R>> toAsyncThrowing(ThrowingFunc2<? super T1, ? super T2, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
     }
     
     /**
@@ -206,6 +310,24 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229450.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, R> Func3<T1, T2, T3, Observable<R>> toAsyncThrowing(ThrowingFunc3<? super T1, ? super T2, ? super T3, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.an.png" alt="">
@@ -240,6 +362,25 @@ public final class Async {
      */
     public static <T1, T2, T3, T4, R> Func4<T1, T2, T3, T4, Observable<R>> toAsync(Func4<? super T1, ? super T2, ? super T3, ? super T4, ? extends R> func) {
         return toAsync(func, Schedulers.computation());
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229911.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, R> Func4<T1, T2, T3, T4, Observable<R>> toAsyncThrowing(ThrowingFunc4<? super T1, ? super T2, ? super T3, ? super T4, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
     }
     
     /**
@@ -282,6 +423,26 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229571.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, R> Func5<T1, T2, T3, T4, T5, Observable<R>> toAsyncThrowing(ThrowingFunc5<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.an.png" alt="">
@@ -320,6 +481,27 @@ public final class Async {
      */
     public static <T1, T2, T3, T4, T5, T6, R> Func6<T1, T2, T3, T4, T5, T6, Observable<R>> toAsync(Func6<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? extends R> func) {
         return toAsync(func, Schedulers.computation());
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <T6> the sixth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229716.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, T6, R> Func6<T1, T2, T3, T4, T5, T6, Observable<R>> toAsyncThrowing(ThrowingFunc6<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
     }
     
     /**
@@ -366,6 +548,28 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <T6> the sixth parameter type
+     * @param <T7> the seventh parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229773.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, T6, T7, R> Func7<T1, T2, T3, T4, T5, T6, T7, Observable<R>> toAsyncThrowing(ThrowingFunc7<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? super T7, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.an.png" alt="">
@@ -408,6 +612,29 @@ public final class Async {
      */
     public static <T1, T2, T3, T4, T5, T6, T7, T8, R> Func8<T1, T2, T3, T4, T5, T6, T7, T8, Observable<R>> toAsync(Func8<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? super T7, ? super T8, ? extends R> func) {
         return toAsync(func, Schedulers.computation());
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <T6> the sixth parameter type
+     * @param <T7> the seventh parameter type
+     * @param <T8> the eighth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229910.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, T6, T7, T8, R> Func8<T1, T2, T3, T4, T5, T6, T7, T8, Observable<R>> toAsyncThrowing(ThrowingFunc8<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? super T7, ? super T8, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
     }
     
     /**
@@ -458,6 +685,30 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <T6> the sixth parameter type
+     * @param <T7> the seventh parameter type
+     * @param <T8> the eighth parameter type
+     * @param <T9> the ninth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh212074.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, T6, T7, T8, T9, R> Func9<T1, T2, T3, T4, T5, T6, T7, T8, T9, Observable<R>> toAsyncThrowing(ThrowingFunc9<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? super T7, ? super T8, ? super T9, ? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.an.png" alt="">
@@ -482,6 +733,20 @@ public final class Async {
      */
     public static <R> FuncN<Observable<R>> toAsync(FuncN<? extends R> func) {
         return toAsync(func, Schedulers.computation());
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     */
+    public static <R> FuncN<Observable<R>> toAsyncThrowing(ThrowingFuncN<? extends R> func) {
+        return toAsyncThrowing(func, Schedulers.computation());
     }
     
     /**
@@ -515,25 +780,28 @@ public final class Async {
         return new Func0<Observable<R>>() {
             @Override
             public Observable<R> call() {
-                final AsyncSubject<R> subject = AsyncSubject.create();
-                final Worker inner = scheduler.createWorker();
-                inner.schedule(new Action0() {
-                    @Override
-                    public void call() {
-                        R result;
-                        try {
-                            result = func.call();
-                        } catch (Throwable t) {
-                            subject.onError(t);
-                            return;
-                        } finally {
-                            inner.unsubscribe();
-                        }
-                        subject.onNext(result);
-                        subject.onCompleted();
-                    }
-                });
-                return subject;
+                return startCallable(func, scheduler);
+            }
+        };
+    }
+    
+    /**
+     * Convert a synchronous callable call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.s.png" alt="">
+     *
+     * @param <R> the result type
+     * @param func the callable to convert
+     * @param scheduler the Scheduler used to call the {@code func}
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh211792.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <R> Func0<Observable<R>> toAsyncThrowing(final Callable<? extends R> func, final Scheduler scheduler) {
+        return new Func0<Observable<R>>() {
+            @Override
+            public Observable<R> call() {
+                return startCallable(func, scheduler);
             }
         };
     }
@@ -595,6 +863,28 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.s.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @param scheduler the Scheduler used to call the {@code func}
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229731.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, R> Func1<T1, Observable<R>> toAsyncThrowing(final ThrowingFunc1<? super T1, ? extends R> func, final Scheduler scheduler) {
+        return new Func1<T1, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1), scheduler);
+            }
+        };
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.ans.png" alt="">
@@ -648,6 +938,29 @@ public final class Async {
                     }
                 });
                 return subject;
+            }
+        };
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.s.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @param scheduler the Scheduler used to call the {@code func}
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229731.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, R> Func2<T1, T2, Observable<R>> toAsyncThrowing(final ThrowingFunc2<? super T1, ? super T2, ? extends R> func, final Scheduler scheduler) {
+        return new Func2<T1, T2, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1, T2 t2) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1, t2), scheduler);
             }
         };
     }
@@ -713,6 +1026,30 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.s.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @param scheduler the Scheduler used to call the {@code func}
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229287.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, R> Func3<T1, T2, T3, Observable<R>> toAsyncThrowing(final ThrowingFunc3<? super T1, ? super T2, ? super T3, ? extends R> func, final Scheduler scheduler) {
+        return new Func3<T1, T2, T3, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1, T2 t2, T3 t3) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1, t2, t3), scheduler);
+            }
+        };
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.ans.png" alt="">
@@ -770,6 +1107,31 @@ public final class Async {
                     }
                 });
                 return subject;
+            }
+        };
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.s.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @param scheduler the Scheduler used to call the {@code func}
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229560.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, R> Func4<T1, T2, T3, T4, Observable<R>> toAsyncThrowing(final ThrowingFunc4<? super T1, ? super T2, ? super T3, ? super T4, ? extends R> func, final Scheduler scheduler) {
+        return new Func4<T1, T2, T3, T4, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1, T2 t2, T3 t3, T4 t4) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1, t2, t3, t4), scheduler);
             }
         };
     }
@@ -839,6 +1201,31 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229571.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, R> Func5<T1, T2, T3, T4, T5, Observable<R>> toAsyncThrowing(final ThrowingFunc5<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? extends R> func, final Scheduler scheduler) {
+        return new Func5<T1, T2, T3, T4, T5, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1, t2, t3, t4, t5), scheduler);
+            }
+        };
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.ans.png" alt="">
@@ -900,6 +1287,32 @@ public final class Async {
                     }
                 });
                 return subject;
+            }
+        };
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <T6> the sixth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229716.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, T6, R> Func6<T1, T2, T3, T4, T5, T6, Observable<R>> toAsyncThrowing(final ThrowingFunc6<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? extends R> func, final Scheduler scheduler) {
+        return new Func6<T1, T2, T3, T4, T5, T6, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1, t2, t3, t4, t5, t6), scheduler);
             }
         };
     }
@@ -973,6 +1386,33 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <T6> the sixth parameter type
+     * @param <T7> the seventh parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229773.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, T6, T7, R> Func7<T1, T2, T3, T4, T5, T6, T7, Observable<R>> toAsyncThrowing(final ThrowingFunc7<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? super T7, ? extends R> func, final Scheduler scheduler) {
+        return new Func7<T1, T2, T3, T4, T5, T6, T7, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6, T7 t7) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1, t2, t3, t4, t5, t6, t7), scheduler);
+            }
+        };
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.ans.png" alt="">
@@ -1038,6 +1478,35 @@ public final class Async {
                     }
                 });
                 return subject;
+            }
+        };
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.s.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <T6> the sixth parameter type
+     * @param <T7> the seventh parameter type
+     * @param <T8> the eighth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @param scheduler the Scheduler used to call the {@code func}
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh228956.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, T6, T7, T8, R> Func8<T1, T2, T3, T4, T5, T6, T7, T8, Observable<R>> toAsyncThrowing(final ThrowingFunc8<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? super T7, ? super T8, ? extends R> func, final Scheduler scheduler) {
+        return new Func8<T1, T2, T3, T4, T5, T6, T7, T8, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6, T7 t7, T8 t8) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1, t2, t3, t4, t5, t6, t7, t8), scheduler);
             }
         };
     }
@@ -1115,6 +1584,36 @@ public final class Async {
     }
     
     /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.s.png" alt="">
+     *
+     * @param <T1> the first parameter type
+     * @param <T2> the second parameter type
+     * @param <T3> the third parameter type
+     * @param <T4> the fourth parameter type
+     * @param <T5> the fifth parameter type
+     * @param <T6> the sixth parameter type
+     * @param <T7> the seventh parameter type
+     * @param <T8> the eighth parameter type
+     * @param <T9> the ninth parameter type
+     * @param <R> the result type
+     * @param func the function to convert
+     * @param scheduler the Scheduler used to call the {@code func}
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     * @see <a href="http://msdn.microsoft.com/en-us/library/hh229008.aspx">MSDN: Observable.ToAsync</a>
+     */
+    public static <T1, T2, T3, T4, T5, T6, T7, T8, T9, R> Func9<T1, T2, T3, T4, T5, T6, T7, T8, T9, Observable<R>> toAsyncThrowing(final ThrowingFunc9<? super T1, ? super T2, ? super T3, ? super T4, ? super T5, ? super T6, ? super T7, ? super T8, ? super T9, ? extends R> func, final Scheduler scheduler) {
+        return new Func9<T1, T2, T3, T4, T5, T6, T7, T8, T9, Observable<R>>() {
+            @Override
+            public Observable<R> call(T1 t1, T2 t2, T3 t3, T4 t4, T5 t5, T6 t6, T7 t7, T8 t8, T9 t9) {
+                return startCallable(ThrowingFunctions.toCallable(func, t1, t2, t3, t4, t5, t6, t7, t8, t9), scheduler);
+            }
+        };
+    }
+    
+    /**
      * Convert a synchronous action call into an asynchronous function call through an Observable.
      * <p>
      * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.ans.png" alt="">
@@ -1162,6 +1661,26 @@ public final class Async {
                     }
                 });
                 return subject;
+            }
+        };
+    }
+    
+    /**
+     * Convert a synchronous function call into an asynchronous function call through an Observable.
+     * <p>
+     * <img width="640" src="https://raw.github.com/wiki/ReactiveX/RxJava/images/rx-operators/toAsync.s.png" alt="">
+     *
+     * @param <R> the result type
+     * @param func the function to convert
+     * @param scheduler the Scheduler used to call the {@code func}
+     * @return a function that returns an Observable that executes the {@code func} and emits its returned value
+     * @see <a href="https://github.com/ReactiveX/RxJava/wiki/Async-Operators#wiki-toasync-or-asyncaction-or-asyncfunc">RxJava Wiki: toAsync()</a>
+     */
+    public static <R> FuncN<Observable<R>> toAsyncThrowing(final ThrowingFuncN<? extends R> func, final Scheduler scheduler) {
+        return new FuncN<Observable<R>>() {
+            @Override
+            public Observable<R> call(Object... args) {
+                return startCallable(ThrowingFunctions.toCallable(func, args), scheduler);
             }
         };
     }
