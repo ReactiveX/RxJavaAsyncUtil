@@ -31,6 +31,11 @@ and for Ivy:
 ```xml
 <dependency org="io.reactivex" name="rxjava-async-util" rev="x.y.z" />
 ```
+and for Gradle:
+
+```xml
+compile 'io.reactivex:rxjava-async-util:x.y.z'
+```
 
 ## Build
 
