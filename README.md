@@ -2,6 +2,14 @@
 
 Async utilities for [RxJava](https://github.com/ReactiveX/RxJava).
 
+<a title="See page for author [CC0], via Wikimedia Commons" href="https://commons.wikimedia.org/wiki/File:Warning.svg"><img width="64" alt="Warning" src="https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Warning.svg/128px-Warning.svg.png"></a>
+
+This library is no longer developed. The functionality has been ported to **RxJava 2.x** in a separate project:
+
+https://github.com/akarnokd/RxJava2Extensions#asynchronous-jumpstarting-a-sequence
+
+----------------------------------------------
+
 ## Master Build Status
 
 <a href='https://travis-ci.org/ReactiveX/RxJavaAsyncUtil/builds'><img src='https://travis-ci.org/ReactiveX/RxJavaAsyncUtil.svg?branch=0.x'></a>
